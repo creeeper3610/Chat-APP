@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LINE風 ローカルチャット</title>
+    <title>LINE風 拡張ローカルチャット</title>
     <style>
         :root {
             --line-green: #7493cd; /* トーク画面の背景色 */
@@ -23,15 +23,15 @@
         .app-container {
             display: flex;
             width: 100%;
-            max-width: 900px;
+            max-width: 1000px;
             background: #fff;
             border-radius: 12px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.1);
             overflow: hidden;
         }
-        /* 左側：サイドバー（グループ作成・選択） */
+        /* 左側：サイドバー */
         .sidebar {
-            width: 300px;
+            width: 320px;
             border-right: 1px solid #ddd;
             display: flex;
             flex-direction: column;
@@ -43,45 +43,78 @@
             background: #fff;
         }
         .sidebar-header h2 {
-            font-size: 18px;
+            font-size: 16px;
             margin: 0 0 10px 0;
+            color: #333;
         }
-        .create-group-box {
+        .input-box-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 5px;
+        }
+        .inline-form {
             display: flex;
             gap: 5px;
         }
-        .create-group-box input {
+        .inline-form input {
             flex: 1;
-            padding: 8px;
+            padding: 6px 10px;
             border: 1px solid #ccc;
             border-radius: 4px;
+            font-size: 13px;
         }
-        .create-group-box button {
+        .inline-form button {
             background: #242424;
             color: white;
             border: none;
-            padding: 8px 12px;
+            padding: 6px 12px;
             border-radius: 4px;
             cursor: pointer;
             font-weight: bold;
+            font-size: 13px;
+            white-space: nowrap;
         }
-        .group-list {
+        .tab-menu {
+            display: flex;
+            border-bottom: 1px solid #eee;
+            background: #f1f1f1;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: bold;
+            color: #666;
+            text-align: center;
+        }
+        .tab-btn.active {
+            background: #fff;
+            color: #242424;
+            border-top: 2px solid #5c7fbc;
+        }
+        .list-container {
             flex: 1;
             overflow-y: auto;
+        }
+        .item-list {
             list-style: none;
             margin: 0;
             padding: 0;
         }
-        .group-item {
-            padding: 15px;
+        .list-item {
+            padding: 12px 15px;
             border-bottom: 1px solid #eee;
             cursor: pointer;
             transition: background 0.2s;
         }
-        .group-item:hover { background: #f0f0f0; }
-        .group-item.active { background: #e6edf7; font-weight: bold; }
-        .group-name { font-size: 15px; color: #333; margin-bottom: 3px; }
-        .group-id-label { font-size: 11px; color: #888; font-family: monospace; background: #eee; padding: 2px 4px; border-radius: 3px; }
+        .list-item:hover { background: #f0f0f0; }
+        .list-item.active { background: #e6edf7; font-weight: bold; }
+        .item-title { font-size: 14px; color: #333; margin-bottom: 3px; }
+        .item-sub { font-size: 11px; color: #888; font-family: monospace; background: #eee; padding: 1px 4px; border-radius: 3px; display: inline-block; }
 
         /* 右側：メインチャット画面 */
         .chat-main {
@@ -102,7 +135,6 @@
         }
         .chat-header .current-id { font-size: 12px; font-weight: normal; color: #666; }
         
-        /* メッセージ表示エリア */
         .message-area {
             flex: 1;
             padding: 20px;
@@ -116,13 +148,11 @@
             flex-direction: column;
             width: 100%;
         }
-        /* 自分のメッセージ（右側） */
         .msg-row.me { align-items: flex-end; }
-        /* 他人のメッセージ（左側） */
         .msg-row.other { align-items: flex-start; }
         
-        .sender-name { font-size: 11px; color: #fff; margin-bottom: 3px; text-shadow: 1px 1px 2px rgba(0,0,0,0.3); }
-        .msg-row.me .sender-name { display: none; } /* 自分のは名前を隠す */
+        .sender-info { font-size: 11px; color: #fff; margin-bottom: 3px; text-shadow: 1px 1px 2px rgba(0,0,0,0.3); }
+        .msg-row.me .sender-info { display: none; }
 
         .balloon {
             max-width: 70%;
@@ -130,7 +160,6 @@
             border-radius: 15px;
             font-size: 15px;
             word-break: break-all;
-            position: relative;
             box-shadow: 0 1px 2px rgba(0,0,0,0.1);
         }
         .msg-row.me .balloon {
@@ -144,25 +173,12 @@
             border-top-left-radius: 2px;
         }
 
-        /* 入力フォームエリア */
         .input-area {
             background: #fff;
             padding: 15px;
             display: flex;
             flex-direction: column;
             gap: 10px;
-        }
-        .user-selector {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 14px;
-        }
-        .user-selector input {
-            padding: 4px 8px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            width: 120px;
         }
         .input-row {
             display: flex;
@@ -189,6 +205,27 @@
         }
         .input-row button:hover { background: #4a6fa5; }
         
+        /* 設定エリア・プレースホルダー */
+        .config-box {
+            background: #fcfcfc;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #e0e0e0;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+        .config-row {
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .config-row input {
+            padding: 4px 6px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            flex: 1;
+        }
         .no-chat-placeholder {
             flex: 1;
             display: flex;
@@ -203,39 +240,75 @@
 <body>
 
 <div class="app-container">
-    <!-- サイドバー -->
+    <!-- 左側：サイドバー（設定・操作エリア） -->
     <div class="sidebar">
         <div class="sidebar-header">
-            <h2>💬 グループ</h2>
-            <div class="create-group-box">
-                <input type="text" id="newGroupName" placeholder="グループ名を入力...">
-                <button onclick="createGroup()">作成</button>
+            <!-- 👤 自分のプロフィール・設定エリア -->
+            <div class="config-box">
+                <div class="config-row">
+                    <strong>👤 マイプロフィール</strong>
+                </div>
+                <div class="config-row">
+                    <span>名前:</span>
+                    <input type="text" id="myUserName" value="ユーザー1" onchange="updateProfile()">
+                </div>
+                <div class="config-row">
+                    <span>自分のID:</span>
+                    <span id="myUserId" style="font-family:monospace; background:#e0e0e0; padding:2px 6px; border-radius:3px; font-weight:bold;">---</span>
+                </div>
+            </div>
+
+            <!-- ➕ アクション入力欄（グループ作成・ID参加・友達追加） -->
+            <div class="input-box-group">
+                <!-- 1. グループ新規作成 -->
+                <div class="inline-form">
+                    <input type="text" id="newGroupName" placeholder="新しいグループ名を入力...">
+                    <button onclick="createNewGroup()">作成</button>
+                </div>
+                <!-- 2. グループIDで参加 -->
+                <div class="inline-form">
+                    <input type="text" id="joinGroupId" placeholder="参加するグループIDを入力...">
+                    <button onclick="joinGroupById()" style="background:#5c7fbc;">参加</button>
+                </div>
+                <!-- 3. 友達IDを追加 -->
+                <div class="inline-form">
+                    <input type="text" id="targetFriendId" placeholder="友達のユーザーIDを入力...">
+                    <button onclick="addFriendById()" style="background:#28a745;">友達追加</button>
+                </div>
             </div>
         </div>
-        <ul id="groupList" class="group-list"></ul>
+
+        <!-- 📑 タブメニュー切り替え -->
+        <div class="tab-menu">
+            <button id="tabChat" class="tab-btn active" onclick="switchTab('chat')">💬 トーク一覧</button>
+            <button id="tabFriend" class="tab-btn" onclick="switchTab('friend')">👥 友達一覧</button>
+        </div>
+
+        <!-- 📜 各種一覧の表示コンテナ -->
+        <div class="list-container">
+            <!-- チャットトーク一覧 -->
+            <ul id="chatList" class="item-list"></ul>
+            <!-- 友達一覧（初期状態は非表示） -->
+            <ul id="friendList" class="item-list" style="display:none;"></ul>
+        </div>
     </div>
 
-    <!-- チャットメイン画面 -->
+    <!-- 右側：メインチャット画面 -->
     <div id="chatMain" class="chat-main">
-        <div class="no-chat-placeholder" id="placeholderText">グループを選択するか、新しく作成してください。</div>
+        <div class="no-chat-placeholder" id="placeholderText">トーク（グループまたは友達）を選択するか、新しく作成・参加してください。</div>
         
-        <!-- 選択後にJavaScriptで表示制御されるコンテンツ -->
+        <!-- トーク選択後に表示されるエリア -->
         <div id="chatContent" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
             <div class="chat-header">
-                <span id="currentGroupName">グループ名</span>
-                <span class="current-id">ID: <span id="currentGroupId">---</span></span>
+                <span id="currentRoomName">トーク相手・グループ名</span>
+                <span class="current-id">ルームID: <span id="currentRoomId">---</span></span>
             </div>
             
-            <!-- トーク履歴 -->
+            <!-- LINE風メッセージ表示エリア -->
             <div id="messageArea" class="message-area"></div>
             
-            <!-- メッセージ入力 -->
+            <!-- メッセージ入力フォーム -->
             <div class="input-area">
-                <div class="user-selector">
-                    <label>👤 あなたの表示名:</label>
-                    <input type="text" id="currentUserName" value="ユーザー1" onchange="saveUserName()">
-                    <span style="font-size: 11px; color: #888;">(※他人になりきるときは名前を変えてください)</span>
-                </div>
                 <div class="input-row">
                     <textarea id="messageInput" placeholder="メッセージを入力... (Enterで送信)" onkeydown="handleEnter(event)"></textarea>
                     <button onclick="sendMessage()">送信</button>
@@ -245,140 +318,255 @@
     </div>
 </div>
 <script>
-    // 定数・グローバル変数
-    const GROUP_LIST_KEY = 'line_group_list'; // グループ一覧を管理するストレージキー
-    let currentGroupId = null; // 現在選択中のグループID
+    // --- ローカルストレージ用キー定義 ---
+    const KEY_MY_INFO     = 'line_v2_my_info';     // 自分のプロファイル（ID, 名前）
+    const KEY_ROOM_LIST   = 'line_v2_room_list';   // 参加中のトークルーム一覧
+    const KEY_FRIEND_LIST = 'line_v2_friend_list'; // 友達のユーザーID一覧
 
-    // 起動時の初期化
+    // --- グローバル状態管理 ---
+    let myInfo = { id: '', name: 'ユーザー1' };
+    let currentRoomId = null;
+    let currentTab = 'chat'; // 'chat' または 'friend'
+
+    // --- 1. 初期化処理 ---
     window.addEventListener('DOMContentLoaded', () => {
-        loadGroupList();
-        loadUserName();
-        // 別のタブで更新されたときにチャット画面を同期する設定
+        initMyProfile();
+        loadRoomList();
+        loadFriendList();
+
+        // 複数タブ・ウィンドウ間のリアルタイム同期
         window.addEventListener('storage', (e) => {
-            if (e.key === GROUP_LIST_KEY) {
-                loadGroupList();
-            } else if (e.key === currentGroupId) {
+            if (e.key === KEY_ROOM_LIST || e.key === KEY_FRIEND_LIST) {
+                loadRoomList();
+                loadFriendList();
+            } else if (e.key === currentRoomId) {
                 loadMessages();
             }
         });
     });
 
-    // 1. ランダムなグループIDの生成 (「group-」+ 8桁のランダム英数字)
-    function generateGroupId() {
-        return 'group-' + Math.random().toString(36).substring(2, 10);
+    // 自分のプロフィール初期化（なければ自動生成）
+    function initMyProfile() {
+        const saved = localStorage.getItem(KEY_MY_INFO);
+        if (saved) {
+            myInfo = JSON.parse(saved);
+        } else {
+            // ランダムなユーザーIDを自動生成（変更不可）
+            myInfo.id = 'uid-' + Math.random().toString(36).substring(2, 10);
+            localStorage.setItem(KEY_MY_INFO, JSON.stringify(myInfo));
+        }
+        document.getElementById('myUserId').textContent = myInfo.id;
+        document.getElementById('myUserName').value = myInfo.name;
     }
 
-    // 2. グループ作成
-    function createGroup() {
+    // 名前の変更を保存
+    function updateProfile() {
+        const nameInput = document.getElementById('myUserName').value.trim();
+        if (!nameInput) return alert('名前を入力してください');
+        myInfo.name = nameInput;
+        localStorage.setItem(KEY_MY_INFO, JSON.stringify(myInfo));
+        if (currentRoomId) loadMessages(); // 自分の名前が変わったので描画を更新
+    }
+
+    // 汎用ID生成（グループ用・トークルーム用）
+    function generateRandomId(prefix) {
+        return prefix + '-' + Math.random().toString(36).substring(2, 10);
+    }
+
+    // --- 2. タブ切り替え ---
+    function switchTab(tab) {
+        currentTab = tab;
+        document.getElementById('tabChat').classList.toggle('active', tab === 'chat');
+        document.getElementById('tabFriend').classList.toggle('active', tab === 'friend');
+        document.getElementById('chatList').style.display = tab === 'chat' ? 'block' : 'none';
+        document.getElementById('friendList').style.display = tab === 'friend' ? 'block' : 'none';
+    }
+
+    // --- 3. グループ作成・ID参加機能 ---
+    function createNewGroup() {
         const input = document.getElementById('newGroupName');
-        const groupName = input.value.trim();
-        if (!groupName) return alert('グループ名を入力してください');
+        const name = input.value.trim();
+        if (!name) return alert('グループ名を入力してください');
 
-        const newId = generateGroupId();
-        const groupList = JSON.parse(localStorage.getItem(GROUP_LIST_KEY)) || [];
-
-        // 新しいグループオブジェクト
-        const newGroup = { id: newId, name: groupName };
-        groupList.push(newGroup);
-
-        // ローカルストレージにグループ一覧を保存
-        localStorage.setItem(GROUP_LIST_KEY, JSON.stringify(groupList));
-        
-        // チャット初期メッセージをそのIDのストレージにセット
-        localStorage.setItem(newId, JSON.stringify([]));
+        const roomId = generateRandomId('group');
+        addRoomToStorage(roomId, name, 'group');
 
         input.value = '';
-        loadGroupList();
-        selectGroup(newId, groupName); // 作成したら自動でそのグループを開く
+        switchTab('chat');
+        selectRoom(roomId, name);
     }
 
-    // 3. グループ一覧をストレージから読み込んで表示
-    function loadGroupList() {
-        const groupList = JSON.parse(localStorage.getItem(GROUP_LIST_KEY)) || [];
-        const groupListEl = document.getElementById('groupList');
-        groupListEl.innerHTML = '';
+    function joinGroupById() {
+        const input = document.getElementById('joinGroupId');
+        const roomId = input.value.trim();
+        if (!roomId) return alert('グループIDを入力してください');
 
-        groupList.forEach(group => {
+        const rooms = JSON.parse(localStorage.getItem(KEY_ROOM_LIST)) || [];
+        const exists = rooms.find(r => r.id === roomId);
+        if (exists) {
+            input.value = '';
+            return selectRoom(exists.id, exists.name);
+        }
+
+        // ストレージに対象グループのデータ（履歴）が存在するかチェック
+        const history = localStorage.getItem(roomId);
+        if (history !== null) {
+            addRoomToStorage(roomId, '参加したグループ', 'group');
+            input.value = '';
+            switchTab('chat');
+            selectRoom(roomId, '参加したグループ');
+        } else {
+            alert('指定されたグループIDが見つかりません。');
+        }
+    }
+
+    // --- 4. 友達追加機能（双方向での部屋の自動共有） ---
+    function addFriendById() {
+        const input = document.getElementById('targetFriendId');
+        const friendId = input.value.trim();
+
+        if (!friendId) return alert('友達のユーザーIDを入力してください');
+        if (friendId === myInfo.id) return alert('自分のIDは追加できません');
+
+        // 1. 友達一覧への追加（重複チェック）
+        let friends = JSON.parse(localStorage.getItem(KEY_FRIEND_LIST)) || [];
+        if (!friends.includes(friendId)) {
+            friends.push(friendId);
+            localStorage.setItem(KEY_FRIEND_LIST, JSON.stringify(friends));
+        }
+
+        // 2. 双方向共通の1対1トークルームIDを決定する（IDを辞書順に並び替えて結合）
+        // これにより、AがBを追加しても、BがAを追加しても同じトークルームIDが使われる
+        const sortedIds = [myInfo.id, friendId].sort();
+        const pairRoomId = `pair-${sortedIds[0]}-${sortedIds[1]}`;
+
+        // 自分のルーム一覧に追加
+        addRoomToStorage(pairRoomId, `友達 (${friendId})`, 'private');
+
+        // 【仕組み】相手のルーム一覧（もし存在すれば）にもこの部屋を自動追加させるため、
+        // 相手が見る「全体ルームリスト」の共有データ領域を更新する
+        // ※ローカルストレージはブラウザ共通なので、同じPC内なら相手のタブ側でもこの部屋が出現します。
+        let allRooms = JSON.parse(localStorage.getItem(KEY_ROOM_LIST)) || [];
+        if (!allRooms.some(r => r.id === pairRoomId)) {
+            allRooms.push({ id: pairRoomId, name: `友達 (${myInfo.id})`, type: 'private' });
+            localStorage.setItem(KEY_ROOM_LIST, JSON.stringify(allRooms));
+        }
+
+        input.value = '';
+        loadFriendList();
+        loadRoomList();
+        switchTab('chat');
+        selectRoom(pairRoomId, `友達 (${friendId})`);
+    }
+
+    // ルームリストへの登録共通処理
+    function addRoomToStorage(id, name, type) {
+        let rooms = JSON.parse(localStorage.getItem(KEY_ROOM_LIST)) || [];
+        if (!rooms.some(r => r.id === id)) {
+            rooms.push({ id: id, name: name, type: type });
+            localStorage.setItem(KEY_ROOM_LIST, JSON.stringify(rooms));
+            if (!localStorage.getItem(id)) {
+                localStorage.setItem(id, JSON.stringify([])); // 空のチャット配列作成
+            }
+        }
+        loadRoomList();
+    }
+
+    // --- 5. 一覧表示（描画）ロジック ---
+    function loadRoomList() {
+        const rooms = JSON.parse(localStorage.getItem(KEY_ROOM_LIST)) || [];
+        const listEl = document.getElementById('chatList');
+        listEl.innerHTML = '';
+
+        rooms.forEach(room => {
             const li = document.createElement('li');
-            li.className = `group-item ${group.id === currentGroupId ? 'active' : ''}`;
-            li.onclick = () => selectGroup(group.id, group.name);
+            li.className = `list-item ${room.id === currentRoomId ? 'active' : ''}`;
+            li.onclick = () => selectRoom(room.id, room.name);
             li.innerHTML = `
-                <div class="group-name">${escapeHTML(group.name)}</div>
-                <span class="group-id-label">${group.id}</span>
+                <div class="item-title">${escapeHTML(room.name)}</div>
+                <span class="item-sub">${room.id}</span>
             `;
-            groupListEl.appendChild(li);
+            listEl.appendChild(li);
         });
     }
 
-    // 4. グループの選択
-    function selectGroup(id, name) {
-        currentGroupId = id;
-        
-        // 表示の切り替え
+    function loadFriendList() {
+        const friends = JSON.parse(localStorage.getItem(KEY_FRIEND_LIST)) || [];
+        const listEl = document.getElementById('friendList');
+        listEl.innerHTML = '';
+
+        friends.forEach(fId => {
+            const li = document.createElement('li');
+            li.className = 'list-item';
+            // 友達一覧をクリックしたら、その人との個別チャットを開く
+            li.onclick = () => {
+                const sortedIds = [myInfo.id, fId].sort();
+                const pairRoomId = `pair-${sortedIds[0]}-${sortedIds[1]}`;
+                switchTab('chat');
+                selectRoom(pairRoomId, `友達 (${fId})`);
+            };
+            li.innerHTML = `
+                <div class="item-title">👤 ユーザー: ${escapeHTML(fId)}</div>
+                <span class="item-sub">STATUS: 友達登録済み</span>
+            `;
+            listEl.appendChild(li);
+        });
+    }
+
+    // --- 6. チャットルームの切り替えとメッセージ制御 ---
+    function selectRoom(id, name) {
+        currentRoomId = id;
         document.getElementById('placeholderText').style.display = 'none';
         document.getElementById('chatContent').style.display = 'flex';
-        document.getElementById('currentGroupName').textContent = name;
-        document.getElementById('currentGroupId').textContent = id;
+        document.getElementById('currentRoomName').textContent = name;
+        document.getElementById('currentRoomId').textContent = id;
 
-        // アクティブなグループのスタイルを更新
-        loadGroupList();
-        // メッセージを読み込む
+        loadRoomList();
         loadMessages();
     }
 
-    // 5. メッセージの読み込み
     function loadMessages() {
-        if (!currentGroupId) return;
-        const messageArea = document.getElementById('messageArea');
-        messageArea.innerHTML = '';
+        if (!currentRoomId) return;
+        const area = document.getElementById('messageArea');
+        area.innerHTML = '';
 
-        // グループIDをキーにしてローカルストレージから会話履歴を取得
-        const messages = JSON.parse(localStorage.getItem(currentGroupId)) || [];
-        const myName = document.getElementById('currentUserName').value.trim();
+        const messages = JSON.parse(localStorage.getItem(currentRoomId)) || [];
 
         messages.forEach(msg => {
             const row = document.createElement('div');
-            // 送信者が現在の自分と同じ名前なら「me(右)」、違えば「other(左)」
-            const isMe = (msg.sender === myName);
+            // 【重要】名前ではなく一意の「ユーザーID」で自分と他人を確実に識別！
+            const isMe = (msg.senderId === myInfo.id);
             row.className = `msg-row ${isMe ? 'me' : 'other'}`;
 
             row.innerHTML = `
-                <div class="sender-name">${escapeHTML(msg.sender)}</div>
+                <div class="sender-info">${escapeHTML(msg.senderName)} (${escapeHTML(msg.senderId)})</div>
                 <div class="balloon">${escapeHTML(msg.text).replace(/\n/g, '<br>')}</div>
             `;
-            messageArea.appendChild(row);
+            area.appendChild(row);
         });
-
-        // 常に最新メッセージ（最下部）にスクロール
-        messageArea.scrollTop = messageArea.scrollHeight;
+        area.scrollTop = area.scrollHeight;
     }
 
-    // 6. メッセージの送信
     function sendMessage() {
         const input = document.getElementById('messageInput');
         const text = input.value.trim();
-        const sender = document.getElementById('currentUserName').value.trim();
+        if (!text || !currentRoomId) return;
 
-        if (!text || !currentGroupId) return;
-        if (!sender) return alert('表示名を入力してください');
-
-        const messages = JSON.parse(localStorage.getItem(currentGroupId)) || [];
+        const messages = JSON.parse(localStorage.getItem(currentRoomId)) || [];
         
-        // メッセージデータを追加
+        // 送信データに「名前」と「ユーザーID」を両方乗せる
         messages.push({
-            sender: sender,
+            senderId: myInfo.id,
+            senderName: myInfo.name,
             text: text,
             timestamp: new Date().getTime()
         });
 
-        // ローカルストレージを更新
-        localStorage.setItem(currentGroupId, JSON.stringify(messages));
-
+        localStorage.setItem(currentRoomId, JSON.stringify(messages));
         input.value = '';
         loadMessages();
     }
 
-    // 便利機能：Enterキーで送信 (Shift+Enterは改行)
     function handleEnter(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -386,20 +574,6 @@
         }
     }
 
-    // 表示名のローカルストレージ保存（使いやすさのため）
-    function saveUserName() {
-        const name = document.getElementById('currentUserName').value.trim();
-        localStorage.setItem('line_chat_username', name);
-        loadMessages(); // 自分の名前が変わると左右の配置が変わるため再描画
-    }
-    function loadUserName() {
-        const savedName = localStorage.getItem('line_chat_username');
-        if (savedName) {
-            document.getElementById('currentUserName').value = savedName;
-        }
-    }
-
-    // セキュリティ対策（XSS防止用のエスケープ関数）
     function escapeHTML(str) {
         return str.replace(/[&<>"']/g, match => {
             const escape = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' };
