@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LINE風 ローカルチャット</title>
+    <style>
+        :root {
+            --line-green: #7493cd; /* トーク画面の背景色 */
+            --my-balloon: #85e249; /* 自分の吹き出し */
+            --other-balloon: #ffffff; /* 他人の吹き出し */
+        }
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+        .app-container {
+            display: flex;
+            width: 100%;
+            max-width: 900px;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        /* 左側：サイドバー（グループ作成・選択） */
+        .sidebar {
+            width: 300px;
+            border-right: 1px solid #ddd;
+            display: flex;
+            flex-direction: column;
+            background: #fafafa;
+        }
+        .sidebar-header {
+            padding: 15px;
+            border-bottom: 1px solid #ddd;
+            background: #fff;
+        }
+        .sidebar-header h2 {
+            font-size: 18px;
+            margin: 0 0 10px 0;
+        }
+        .create-group-box {
+            display: flex;
+            gap: 5px;
+        }
+        .create-group-box input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .create-group-box button {
+            background: #242424;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .group-list {
+            flex: 1;
+            overflow-y: auto;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        .group-item {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .group-item:hover { background: #f0f0f0; }
+        .group-item.active { background: #e6edf7; font-weight: bold; }
+        .group-name { font-size: 15px; color: #333; margin-bottom: 3px; }
+        .group-id-label { font-size: 11px; color: #888; font-family: monospace; background: #eee; padding: 2px 4px; border-radius: 3px; }
+
+        /* 右側：メインチャット画面 */
+        .chat-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: var(--line-green);
+        }
+        .chat-header {
+            background: #fff;
+            padding: 15px;
+            border-bottom: 1px solid #ddd;
+            font-weight: bold;
+            font-size: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .chat-header .current-id { font-size: 12px; font-weight: normal; color: #666; }
+        
+        /* メッセージ表示エリア */
+        .message-area {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .msg-row {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+        }
+        /* 自分のメッセージ（右側） */
+        .msg-row.me { align-items: flex-end; }
+        /* 他人のメッセージ（左側） */
+        .msg-row.other { align-items: flex-start; }
+        
+        .sender-name { font-size: 11px; color: #fff; margin-bottom: 3px; text-shadow: 1px 1px 2px rgba(0,0,0,0.3); }
+        .msg-row.me .sender-name { display: none; } /* 自分のは名前を隠す */
+
+        .balloon {
+            max-width: 70%;
+            padding: 10px 14px;
+            border-radius: 15px;
+            font-size: 15px;
+            word-break: break-all;
+            position: relative;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        .msg-row.me .balloon {
+            background: var(--my-balloon);
+            color: #000;
+            border-top-right-radius: 2px;
+        }
+        .msg-row.other .balloon {
+            background: var(--other-balloon);
+            color: #000;
+            border-top-left-radius: 2px;
+        }
+
+        /* 入力フォームエリア */
+        .input-area {
+            background: #fff;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .user-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+        }
+        .user-selector input {
+            padding: 4px 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 120px;
+        }
+        .input-row {
+            display: flex;
+            gap: 10px;
+        }
+        .input-row textarea {
+            flex: 1;
+            height: 40px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            resize: none;
+            font-size: 15px;
+        }
+        .input-row button {
+            background: #5c7fbc;
+            color: white;
+            border: none;
+            padding: 0 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 15px;
+        }
+        .input-row button:hover { background: #4a6fa5; }
+        
+        .no-chat-placeholder {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+            font-size: 16px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <!-- サイドバー -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>💬 グループ</h2>
+            <div class="create-group-box">
+                <input type="text" id="newGroupName" placeholder="グループ名を入力...">
+                <button onclick="createGroup()">作成</button>
+            </div>
+        </div>
+        <ul id="groupList" class="group-list"></ul>
+    </div>
+
+    <!-- チャットメイン画面 -->
+    <div id="chatMain" class="chat-main">
+        <div class="no-chat-placeholder" id="placeholderText">グループを選択するか、新しく作成してください。</div>
+        
+        <!-- 選択後にJavaScriptで表示制御されるコンテンツ -->
+        <div id="chatContent" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
+            <div class="chat-header">
+                <span id="currentGroupName">グループ名</span>
+                <span class="current-id">ID: <span id="currentGroupId">---</span></span>
+            </div>
+            
+            <!-- トーク履歴 -->
+            <div id="messageArea" class="message-area"></div>
+            
+            <!-- メッセージ入力 -->
+            <div class="input-area">
+                <div class="user-selector">
+                    <label>👤 あなたの表示名:</label>
+                    <input type="text" id="currentUserName" value="ユーザー1" onchange="saveUserName()">
+                    <span style="font-size: 11px; color: #888;">(※他人になりきるときは名前を変えてください)</span>
+                </div>
+                <div class="input-row">
+                    <textarea id="messageInput" placeholder="メッセージを入力... (Enterで送信)" onkeydown="handleEnter(event)"></textarea>
+                    <button onclick="sendMessage()">送信</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+    // 定数・グローバル変数
+    const GROUP_LIST_KEY = 'line_group_list'; // グループ一覧を管理するストレージキー
+    let currentGroupId = null; // 現在選択中のグループID
+
+    // 起動時の初期化
+    window.addEventListener('DOMContentLoaded', () => {
+        loadGroupList();
+        loadUserName();
+        // 別のタブで更新されたときにチャット画面を同期する設定
+        window.addEventListener('storage', (e) => {
+            if (e.key === GROUP_LIST_KEY) {
+                loadGroupList();
+            } else if (e.key === currentGroupId) {
+                loadMessages();
+            }
+        });
+    });
+
+    // 1. ランダムなグループIDの生成 (「group-」+ 8桁のランダム英数字)
+    function generateGroupId() {
+        return 'group-' + Math.random().toString(36).substring(2, 10);
+    }
+
+    // 2. グループ作成
+    function createGroup() {
+        const input = document.getElementById('newGroupName');
+        const groupName = input.value.trim();
+        if (!groupName) return alert('グループ名を入力してください');
+
+        const newId = generateGroupId();
+        const groupList = JSON.parse(localStorage.getItem(GROUP_LIST_KEY)) || [];
+
+        // 新しいグループオブジェクト
+        const newGroup = { id: newId, name: groupName };
+        groupList.push(newGroup);
+
+        // ローカルストレージにグループ一覧を保存
+        localStorage.setItem(GROUP_LIST_KEY, JSON.stringify(groupList));
+        
+        // チャット初期メッセージをそのIDのストレージにセット
+        localStorage.setItem(newId, JSON.stringify([]));
+
+        input.value = '';
+        loadGroupList();
+        selectGroup(newId, groupName); // 作成したら自動でそのグループを開く
+    }
+
+    // 3. グループ一覧をストレージから読み込んで表示
+    function loadGroupList() {
+        const groupList = JSON.parse(localStorage.getItem(GROUP_LIST_KEY)) || [];
+        const groupListEl = document.getElementById('groupList');
+        groupListEl.innerHTML = '';
+
+        groupList.forEach(group => {
+            const li = document.createElement('li');
+            li.className = `group-item ${group.id === currentGroupId ? 'active' : ''}`;
+            li.onclick = () => selectGroup(group.id, group.name);
+            li.innerHTML = `
+                <div class="group-name">${escapeHTML(group.name)}</div>
+                <span class="group-id-label">${group.id}</span>
+            `;
+            groupListEl.appendChild(li);
+        });
+    }
+
+    // 4. グループの選択
+    function selectGroup(id, name) {
+        currentGroupId = id;
+        
+        // 表示の切り替え
+        document.getElementById('placeholderText').style.display = 'none';
+        document.getElementById('chatContent').style.display = 'flex';
+        document.getElementById('currentGroupName').textContent = name;
+        document.getElementById('currentGroupId').textContent = id;
+
+        // アクティブなグループのスタイルを更新
+        loadGroupList();
+        // メッセージを読み込む
+        loadMessages();
+    }
+
+    // 5. メッセージの読み込み
+    function loadMessages() {
+        if (!currentGroupId) return;
+        const messageArea = document.getElementById('messageArea');
+        messageArea.innerHTML = '';
+
+        // グループIDをキーにしてローカルストレージから会話履歴を取得
+        const messages = JSON.parse(localStorage.getItem(currentGroupId)) || [];
+        const myName = document.getElementById('currentUserName').value.trim();
+
+        messages.forEach(msg => {
+            const row = document.createElement('div');
+            // 送信者が現在の自分と同じ名前なら「me(右)」、違えば「other(左)」
+            const isMe = (msg.sender === myName);
+            row.className = `msg-row ${isMe ? 'me' : 'other'}`;
+
+            row.innerHTML = `
+                <div class="sender-name">${escapeHTML(msg.sender)}</div>
+                <div class="balloon">${escapeHTML(msg.text).replace(/\n/g, '<br>')}</div>
+            `;
+            messageArea.appendChild(row);
+        });
+
+        // 常に最新メッセージ（最下部）にスクロール
+        messageArea.scrollTop = messageArea.scrollHeight;
+    }
+
+    // 6. メッセージの送信
+    function sendMessage() {
+        const input = document.getElementById('messageInput');
+        const text = input.value.trim();
+        const sender = document.getElementById('currentUserName').value.trim();
+
+        if (!text || !currentGroupId) return;
+        if (!sender) return alert('表示名を入力してください');
+
+        const messages = JSON.parse(localStorage.getItem(currentGroupId)) || [];
+        
+        // メッセージデータを追加
+        messages.push({
+            sender: sender,
+            text: text,
+            timestamp: new Date().getTime()
+        });
+
+        // ローカルストレージを更新
+        localStorage.setItem(currentGroupId, JSON.stringify(messages));
+
+        input.value = '';
+        loadMessages();
+    }
+
+    // 便利機能：Enterキーで送信 (Shift+Enterは改行)
+    function handleEnter(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    }
+
+    // 表示名のローカルストレージ保存（使いやすさのため）
+    function saveUserName() {
+        const name = document.getElementById('currentUserName').value.trim();
+        localStorage.setItem('line_chat_username', name);
+        loadMessages(); // 自分の名前が変わると左右の配置が変わるため再描画
+    }
+    function loadUserName() {
+        const savedName = localStorage.getItem('line_chat_username');
+        if (savedName) {
+            document.getElementById('currentUserName').value = savedName;
+        }
+    }
+
+    // セキュリティ対策（XSS防止用のエスケープ関数）
+    function escapeHTML(str) {
+        return str.replace(/[&<>"']/g, match => {
+            const escape = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' };
+            return escape[match];
+        });
+    }
+</script>
+
+</body>
+</html>
