@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LINE風 拡張ローカルチャット</title>
+    <title>WS通信対応 LINE風ローカルチャット</title>
     <style>
         :root {
             --line-green: #7493cd; /* トーク画面の背景色 */
@@ -226,6 +226,16 @@
             border-radius: 4px;
             flex: 1;
         }
+        .ws-badge {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            color: white;
+            font-weight: bold;
+        }
+        .ws-connected { background-color: #28a745; }
+        .ws-disconnected { background-color: #dc3545; }
+
         .no-chat-placeholder {
             flex: 1;
             display: flex;
@@ -300,7 +310,11 @@
         <!-- トーク選択後に表示されるエリア -->
         <div id="chatContent" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
             <div class="chat-header">
-                <span id="currentRoomName">トーク相手・グループ名</span>
+                <div>
+                    <span id="currentRoomName" style="margin-right: 8px;">トーク相手・グループ名</span>
+                    <!-- 🟢 サーバー接続状態のインジケーター -->
+                    <span id="wsStatusBadge" class="ws-badge ws-disconnected">切断</span>
+                </div>
                 <span class="current-id">ルームID: <span id="currentRoomId">---</span></span>
             </div>
             
@@ -319,30 +333,25 @@
 </div>
 <script>
     // --- ローカルストレージ用キー定義 ---
-    const KEY_MY_INFO     = 'line_v2_my_info';     // 自分のプロファイル（ID, 名前）
-    const KEY_ROOM_LIST   = 'line_v2_room_list';   // 参加中のトークルーム一覧
-    const KEY_FRIEND_LIST = 'line_v2_friend_list'; // 友達のユーザーID一覧
+    const KEY_MY_INFO     = 'line_v3_my_info';     
+    const KEY_ROOM_LIST   = 'line_v3_room_list';   
+    const KEY_FRIEND_LIST = 'line_v3_friend_list'; 
+
+    // --- 公開無料WebSocketエンドポイント（PieSocketデモサーバー） ---
+    const WS_URL = 'wss://://piesocket.com';
 
     // --- グローバル状態管理 ---
     let myInfo = { id: '', name: 'ユーザー1' };
     let currentRoomId = null;
-    let currentTab = 'chat'; // 'chat' または 'friend'
+    let currentTab = 'chat'; 
+    let socket = null;
 
     // --- 1. 初期化処理 ---
     window.addEventListener('DOMContentLoaded', () => {
         initMyProfile();
         loadRoomList();
         loadFriendList();
-
-        // 複数タブ・ウィンドウ間のリアルタイム同期
-        window.addEventListener('storage', (e) => {
-            if (e.key === KEY_ROOM_LIST || e.key === KEY_FRIEND_LIST) {
-                loadRoomList();
-                loadFriendList();
-            } else if (e.key === currentRoomId) {
-                loadMessages();
-            }
-        });
+        initWebSocket(); // WebSocket通信を開始
     });
 
     // 自分のプロフィール初期化（なければ自動生成）
@@ -351,7 +360,6 @@
         if (saved) {
             myInfo = JSON.parse(saved);
         } else {
-            // ランダムなユーザーIDを自動生成（変更不可）
             myInfo.id = 'uid-' + Math.random().toString(36).substring(2, 10);
             localStorage.setItem(KEY_MY_INFO, JSON.stringify(myInfo));
         }
@@ -359,21 +367,90 @@
         document.getElementById('myUserName').value = myInfo.name;
     }
 
-    // 名前の変更を保存
     function updateProfile() {
         const nameInput = document.getElementById('myUserName').value.trim();
         if (!nameInput) return alert('名前を入力してください');
         myInfo.name = nameInput;
         localStorage.setItem(KEY_MY_INFO, JSON.stringify(myInfo));
-        if (currentRoomId) loadMessages(); // 自分の名前が変わったので描画を更新
+        if (currentRoomId) loadMessages(); 
     }
 
-    // 汎用ID生成（グループ用・トークルーム用）
     function generateRandomId(prefix) {
         return prefix + '-' + Math.random().toString(36).substring(2, 10);
     }
 
-    // --- 2. タブ切り替え ---
+    // --- 2. WebSocket 制御コアロジック ---
+    function initWebSocket() {
+        socket = new WebSocket(WS_URL);
+
+        socket.onopen = () => {
+            updateWsBadge(true);
+            console.log('WebSocketサーバーに正常に接続しました。');
+        };
+
+        socket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                
+                // 送信者が自分自身の場合は多重処理を防ぐためスルー
+                if (data.senderId === myInfo.id) return;
+
+                // 友達追加のシステムメッセージを受信した場合の双方向部屋生成
+                if (data.type === 'FRIEND_ADD_SIGNAL' && data.targetId === myInfo.id) {
+                    handleFriendSignalReceived(data);
+                    return;
+                }
+
+                // 通常メッセージを受信した場合
+                if (data.roomId) {
+                    const messages = JSON.parse(localStorage.getItem(data.roomId)) || [];
+                    const isDuplicate = messages.some(m => m.timestamp === data.timestamp && m.senderId === data.senderId);
+                    
+                    if (!isDuplicate) {
+                        messages.push({
+                            senderId: data.senderId,
+                            senderName: data.senderName,
+                            text: data.text,
+                            timestamp: data.timestamp
+                        });
+                        localStorage.setItem(data.roomId, JSON.stringify(messages));
+                        
+                        if (currentRoomId === data.roomId) {
+                            loadMessages();
+                        }
+                    }
+                }
+            } catch (e) {
+                // パブリックサーバーのため無関係なデータは無視
+            }
+        };
+
+        socket.onclose = () => {
+            updateWsBadge(false);
+            console.log('WebSocketが切断されました。3秒後に再接続を試みます...');
+            setTimeout(initWebSocket, 3000); // 自動再接続
+        };
+
+        socket.onerror = (error) => {
+            console.error('WebSocketエラー:', error);
+            updateWsBadge(false);
+        };
+    }
+
+    // 画面右上の接続バッジ表示を切り替える
+    function updateWsBadge(isConnected) {
+        const badge = document.getElementById('wsStatusBadge');
+        if (!badge) return;
+        if (isConnected) {
+            badge.textContent = '接続中';
+            badge.className = 'ws-badge ws-connected';
+        } else {
+            badge.textContent = '切断';
+            badge.className = 'ws-badge ws-disconnected';
+        }
+    }
+
+    // --- 3. タブ切り替え ---
     function switchTab(tab) {
         currentTab = tab;
         document.getElementById('tabChat').classList.toggle('active', tab === 'chat');
@@ -381,8 +458,7 @@
         document.getElementById('chatList').style.display = tab === 'chat' ? 'block' : 'none';
         document.getElementById('friendList').style.display = tab === 'friend' ? 'block' : 'none';
     }
-
-    // --- 3. グループ作成・ID参加機能 ---
+    // --- 4. グループ作成・ID参加機能 ---
     function createNewGroup() {
         const input = document.getElementById('newGroupName');
         const name = input.value.trim();
@@ -408,19 +484,14 @@
             return selectRoom(exists.id, exists.name);
         }
 
-        // ストレージに対象グループのデータ（履歴）が存在するかチェック
-        const history = localStorage.getItem(roomId);
-        if (history !== null) {
-            addRoomToStorage(roomId, '参加したグループ', 'group');
-            input.value = '';
-            switchTab('chat');
-            selectRoom(roomId, '参加したグループ');
-        } else {
-            alert('指定されたグループIDが見つかりません。');
-        }
+        // 外部参加用として、該当IDの部屋をローカルに登録
+        addRoomToStorage(roomId, '外部参加グループ', 'group');
+        input.value = '';
+        switchTab('chat');
+        selectRoom(roomId, '外部参加グループ');
     }
 
-    // --- 4. 友達追加機能（双方向での部屋の自動共有） ---
+    // --- 5. 友達追加機能（WSによる双方向同期） ---
     function addFriendById() {
         const input = document.getElementById('targetFriendId');
         const friendId = input.value.trim();
@@ -428,28 +499,26 @@
         if (!friendId) return alert('友達のユーザーIDを入力してください');
         if (friendId === myInfo.id) return alert('自分のIDは追加できません');
 
-        // 1. 友達一覧への追加（重複チェック）
         let friends = JSON.parse(localStorage.getItem(KEY_FRIEND_LIST)) || [];
         if (!friends.includes(friendId)) {
             friends.push(friendId);
             localStorage.setItem(KEY_FRIEND_LIST, JSON.stringify(friends));
         }
 
-        // 2. 双方向共通の1対1トークルームIDを決定する（IDを辞書順に並び替えて結合）
-        // これにより、AがBを追加しても、BがAを追加しても同じトークルームIDが使われる
         const sortedIds = [myInfo.id, friendId].sort();
         const pairRoomId = `pair-${sortedIds[0]}-${sortedIds[1]}`;
 
-        // 自分のルーム一覧に追加
         addRoomToStorage(pairRoomId, `友達 (${friendId})`, 'private');
 
-        // 【仕組み】相手のルーム一覧（もし存在すれば）にもこの部屋を自動追加させるため、
-        // 相手が見る「全体ルームリスト」の共有データ領域を更新する
-        // ※ローカルストレージはブラウザ共通なので、同じPC内なら相手のタブ側でもこの部屋が出現します。
-        let allRooms = JSON.parse(localStorage.getItem(KEY_ROOM_LIST)) || [];
-        if (!allRooms.some(r => r.id === pairRoomId)) {
-            allRooms.push({ id: pairRoomId, name: `友達 (${myInfo.id})`, type: 'private' });
-            localStorage.setItem(KEY_ROOM_LIST, JSON.stringify(allRooms));
+        // WebSocketを通じて相手のブラウザに友達追加の信号を送る
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            const signalData = {
+                type: 'FRIEND_ADD_SIGNAL',
+                senderId: myInfo.id,
+                targetId: friendId,
+                roomId: pairRoomId
+            };
+            socket.send(JSON.stringify(signalData));
         }
 
         input.value = '';
@@ -459,20 +528,30 @@
         selectRoom(pairRoomId, `友達 (${friendId})`);
     }
 
-    // ルームリストへの登録共通処理
+    function handleFriendSignalReceived(data) {
+        let friends = JSON.parse(localStorage.getItem(KEY_FRIEND_LIST)) || [];
+        if (!friends.includes(data.senderId)) {
+            friends.push(data.senderId);
+            localStorage.setItem(KEY_FRIEND_LIST, JSON.stringify(friends));
+            loadFriendList();
+        }
+        addRoomToStorage(data.roomId, `友達 (${data.senderId})`, 'private');
+        loadRoomList();
+    }
+
     function addRoomToStorage(id, name, type) {
         let rooms = JSON.parse(localStorage.getItem(KEY_ROOM_LIST)) || [];
         if (!rooms.some(r => r.id === id)) {
             rooms.push({ id: id, name: name, type: type });
             localStorage.setItem(KEY_ROOM_LIST, JSON.stringify(rooms));
             if (!localStorage.getItem(id)) {
-                localStorage.setItem(id, JSON.stringify([])); // 空のチャット配列作成
+                localStorage.setItem(id, JSON.stringify([])); 
             }
         }
         loadRoomList();
     }
 
-    // --- 5. 一覧表示（描画）ロジック ---
+    // --- 6. 一覧表示（描画）ロジック ---
     function loadRoomList() {
         const rooms = JSON.parse(localStorage.getItem(KEY_ROOM_LIST)) || [];
         const listEl = document.getElementById('chatList');
@@ -498,7 +577,6 @@
         friends.forEach(fId => {
             const li = document.createElement('li');
             li.className = 'list-item';
-            // 友達一覧をクリックしたら、その人との個別チャットを開く
             li.onclick = () => {
                 const sortedIds = [myInfo.id, fId].sort();
                 const pairRoomId = `pair-${sortedIds[0]}-${sortedIds[1]}`;
@@ -513,7 +591,7 @@
         });
     }
 
-    // --- 6. チャットルームの切り替えとメッセージ制御 ---
+    // --- 7. チャットルームの切り替えとメッセージ制御 ---
     function selectRoom(id, name) {
         currentRoomId = id;
         document.getElementById('placeholderText').style.display = 'none';
@@ -534,7 +612,6 @@
 
         messages.forEach(msg => {
             const row = document.createElement('div');
-            // 【重要】名前ではなく一意の「ユーザーID」で自分と他人を確実に識別！
             const isMe = (msg.senderId === myInfo.id);
             row.className = `msg-row ${isMe ? 'me' : 'other'}`;
 
@@ -553,16 +630,31 @@
         if (!text || !currentRoomId) return;
 
         const messages = JSON.parse(localStorage.getItem(currentRoomId)) || [];
-        
-        // 送信データに「名前」と「ユーザーID」を両方乗せる
-        messages.push({
+        const timestamp = new Date().getTime();
+
+        const messageObj = {
             senderId: myInfo.id,
             senderName: myInfo.name,
             text: text,
-            timestamp: new Date().getTime()
-        });
+            timestamp: timestamp
+        };
 
+        messages.push(messageObj);
         localStorage.setItem(currentRoomId, JSON.stringify(messages));
+
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            const payload = {
+                roomId: currentRoomId,
+                senderId: myInfo.id,
+                senderName: myInfo.name,
+                text: text,
+                timestamp: timestamp
+            };
+            socket.send(JSON.stringify(payload));
+        } else {
+            alert('現在サーバーに接続されていません。');
+        }
+
         input.value = '';
         loadMessages();
     }
