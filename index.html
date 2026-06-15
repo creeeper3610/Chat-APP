@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WS通信対応 LINE風ローカルチャット</title>
+    <title>Firebase Firestore リアルタイムチャット</title>
     <style>
         :root {
             --line-green: #7493cd; /* トーク画面の背景色 */
@@ -226,16 +226,6 @@
             border-radius: 4px;
             flex: 1;
         }
-        .ws-badge {
-            font-size: 11px;
-            padding: 2px 6px;
-            border-radius: 10px;
-            color: white;
-            font-weight: bold;
-        }
-        .ws-connected { background-color: #28a745; }
-        .ws-disconnected { background-color: #dc3545; }
-
         .no-chat-placeholder {
             flex: 1;
             display: flex;
@@ -298,7 +288,7 @@
         <div class="list-container">
             <!-- チャットトーク一覧 -->
             <ul id="chatList" class="item-list"></ul>
-            <!-- 友達一覧（初期状態は非表示） -->
+            <!-- 友達一覧 -->
             <ul id="friendList" class="item-list" style="display:none;"></ul>
         </div>
     </div>
@@ -312,8 +302,6 @@
             <div class="chat-header">
                 <div>
                     <span id="currentRoomName" style="margin-right: 8px;">トーク相手・グループ名</span>
-                    <!-- 🟢 サーバー接続状態のインジケーター -->
-                    <span id="wsStatusBadge" class="ws-badge ws-disconnected">切断</span>
                 </div>
                 <span class="current-id">ルームID: <span id="currentRoomId">---</span></span>
             </div>
@@ -331,27 +319,53 @@
         </div>
     </div>
 </div>
-<script>
-    // --- ローカルストレージ用キー定義 ---
-    const KEY_MY_INFO     = 'line_v3_my_info';     
-    const KEY_ROOM_LIST   = 'line_v3_room_list';   
-    const KEY_FRIEND_LIST = 'line_v3_friend_list'; 
+<!-- Firebase SDKの読み込み（CDN経由・Modular v10対応） -->
+<script type="module">
+    import { initializeApp } from "https://gstatic.com";
+    import { 
+        getFirestore, 
+        collection, 
+        doc, 
+        setDoc, 
+        addDoc, 
+        onSnapshot, 
+        query, 
+        orderBy, 
+        serverTimestamp 
+    } from "https://gstatic.com";
 
-    // --- 公開無料WebSocketエンドポイント（PieSocketデモサーバー） ---
-    const WS_URL = 'wss://://piesocket.com';
+    // --- Firebase の接続設定 ---
+    // ※ご自身のFirebaseプロジェクトの設定値に書き換えてください。
+    const firebaseConfig = {
+        apiKey: "YOUR_FIREBASE_API_KEY",
+        authDomain: "YOUR_PROJECT_://firebaseapp.com",
+        projectId: "YOUR_PROJECT_ID",
+        storageBucket: "YOUR_PROJECT_://appspot.com",
+        messagingSenderId: "YOUR_SENDER_ID",
+        appId: "YOUR_APP_ID"
+    };
+
+    // Firebaseの初期化
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // --- ローカルストレージ用キー定義（部屋一覧と友達一覧はローカルで管理） ---
+    const KEY_MY_INFO     = 'line_fb_my_info';     
+    const KEY_ROOM_LIST   = 'line_fb_room_list';   
+    const KEY_FRIEND_LIST = 'line_fb_friend_list'; 
 
     // --- グローバル状態管理 ---
     let myInfo = { id: '', name: 'ユーザー1' };
     let currentRoomId = null;
     let currentTab = 'chat'; 
-    let socket = null;
+    let unsubscribeMessages = null; // リアルタイムリスナー解除用関数
 
     // --- 1. 初期化処理 ---
     window.addEventListener('DOMContentLoaded', () => {
         initMyProfile();
         loadRoomList();
         loadFriendList();
-        initWebSocket(); // WebSocket通信を開始
+        setupGlobalFunctions(); // HTMLのonclick属性から関数を呼べるようにグローバル展開
     });
 
     // 自分のプロフィール初期化（なければ自動生成）
@@ -372,85 +386,13 @@
         if (!nameInput) return alert('名前を入力してください');
         myInfo.name = nameInput;
         localStorage.setItem(KEY_MY_INFO, JSON.stringify(myInfo));
-        if (currentRoomId) loadMessages(); 
     }
 
     function generateRandomId(prefix) {
         return prefix + '-' + Math.random().toString(36).substring(2, 10);
     }
 
-    // --- 2. WebSocket 制御コアロジック ---
-    function initWebSocket() {
-        socket = new WebSocket(WS_URL);
-
-        socket.onopen = () => {
-            updateWsBadge(true);
-            console.log('WebSocketサーバーに正常に接続しました。');
-        };
-
-        socket.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                
-                // 送信者が自分自身の場合は多重処理を防ぐためスルー
-                if (data.senderId === myInfo.id) return;
-
-                // 友達追加のシステムメッセージを受信した場合の双方向部屋生成
-                if (data.type === 'FRIEND_ADD_SIGNAL' && data.targetId === myInfo.id) {
-                    handleFriendSignalReceived(data);
-                    return;
-                }
-
-                // 通常メッセージを受信した場合
-                if (data.roomId) {
-                    const messages = JSON.parse(localStorage.getItem(data.roomId)) || [];
-                    const isDuplicate = messages.some(m => m.timestamp === data.timestamp && m.senderId === data.senderId);
-                    
-                    if (!isDuplicate) {
-                        messages.push({
-                            senderId: data.senderId,
-                            senderName: data.senderName,
-                            text: data.text,
-                            timestamp: data.timestamp
-                        });
-                        localStorage.setItem(data.roomId, JSON.stringify(messages));
-                        
-                        if (currentRoomId === data.roomId) {
-                            loadMessages();
-                        }
-                    }
-                }
-            } catch (e) {
-                // パブリックサーバーのため無関係なデータは無視
-            }
-        };
-
-        socket.onclose = () => {
-            updateWsBadge(false);
-            console.log('WebSocketが切断されました。3秒後に再接続を試みます...');
-            setTimeout(initWebSocket, 3000); // 自動再接続
-        };
-
-        socket.onerror = (error) => {
-            console.error('WebSocketエラー:', error);
-            updateWsBadge(false);
-        };
-    }
-
-    // 画面右上の接続バッジ表示を切り替える
-    function updateWsBadge(isConnected) {
-        const badge = document.getElementById('wsStatusBadge');
-        if (!badge) return;
-        if (isConnected) {
-            badge.textContent = '接続中';
-            badge.className = 'ws-badge ws-connected';
-        } else {
-            badge.textContent = '切断';
-            badge.className = 'ws-badge ws-disconnected';
-        }
-    }
-
-    // --- 3. タブ切り替え ---
+    // --- 2. タブ切り替え ---
     function switchTab(tab) {
         currentTab = tab;
         document.getElementById('tabChat').classList.toggle('active', tab === 'chat');
@@ -458,7 +400,8 @@
         document.getElementById('chatList').style.display = tab === 'chat' ? 'block' : 'none';
         document.getElementById('friendList').style.display = tab === 'friend' ? 'block' : 'none';
     }
-    // --- 4. グループ作成・ID参加機能 ---
+
+    // --- 3. グループ作成・ID参加機能 ---
     function createNewGroup() {
         const input = document.getElementById('newGroupName');
         const name = input.value.trim();
@@ -484,14 +427,14 @@
             return selectRoom(exists.id, exists.name);
         }
 
-        // 外部参加用として、該当IDの部屋をローカルに登録
+        // 外部参加用として、該当IDの部屋をローカルのリストに追加
         addRoomToStorage(roomId, '外部参加グループ', 'group');
         input.value = '';
         switchTab('chat');
         selectRoom(roomId, '外部参加グループ');
     }
 
-    // --- 5. 友達追加機能（WSによる双方向同期） ---
+    // --- 4. 友達追加機能（双方向ルームの決定） ---
     function addFriendById() {
         const input = document.getElementById('targetFriendId');
         const friendId = input.value.trim();
@@ -505,21 +448,11 @@
             localStorage.setItem(KEY_FRIEND_LIST, JSON.stringify(friends));
         }
 
+        // 双方向で一意になる部屋IDを生成（ソートして結合）
         const sortedIds = [myInfo.id, friendId].sort();
         const pairRoomId = `pair-${sortedIds[0]}-${sortedIds[1]}`;
 
         addRoomToStorage(pairRoomId, `友達 (${friendId})`, 'private');
-
-        // WebSocketを通じて相手のブラウザに友達追加の信号を送る
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            const signalData = {
-                type: 'FRIEND_ADD_SIGNAL',
-                senderId: myInfo.id,
-                targetId: friendId,
-                roomId: pairRoomId
-            };
-            socket.send(JSON.stringify(signalData));
-        }
 
         input.value = '';
         loadFriendList();
@@ -528,30 +461,16 @@
         selectRoom(pairRoomId, `友達 (${friendId})`);
     }
 
-    function handleFriendSignalReceived(data) {
-        let friends = JSON.parse(localStorage.getItem(KEY_FRIEND_LIST)) || [];
-        if (!friends.includes(data.senderId)) {
-            friends.push(data.senderId);
-            localStorage.setItem(KEY_FRIEND_LIST, JSON.stringify(friends));
-            loadFriendList();
-        }
-        addRoomToStorage(data.roomId, `友達 (${data.senderId})`, 'private');
-        loadRoomList();
-    }
-
     function addRoomToStorage(id, name, type) {
         let rooms = JSON.parse(localStorage.getItem(KEY_ROOM_LIST)) || [];
         if (!rooms.some(r => r.id === id)) {
             rooms.push({ id: id, name: name, type: type });
             localStorage.setItem(KEY_ROOM_LIST, JSON.stringify(rooms));
-            if (!localStorage.getItem(id)) {
-                localStorage.setItem(id, JSON.stringify([])); 
-            }
         }
         loadRoomList();
     }
 
-    // --- 6. 一覧表示（描画）ロジック ---
+    // --- 5. 一覧表示（描画）ロジック ---
     function loadRoomList() {
         const rooms = JSON.parse(localStorage.getItem(KEY_ROOM_LIST)) || [];
         const listEl = document.getElementById('chatList');
@@ -591,7 +510,7 @@
         });
     }
 
-    // --- 7. チャットルームの切り替えとメッセージ制御 ---
+    // --- 6. Firestoreリアルタイムリスナー接続コア ---
     function selectRoom(id, name) {
         currentRoomId = id;
         document.getElementById('placeholderText').style.display = 'none';
@@ -600,65 +519,60 @@
         document.getElementById('currentRoomId').textContent = id;
 
         loadRoomList();
-        loadMessages();
-    }
 
-    function loadMessages() {
-        if (!currentRoomId) return;
-        const area = document.getElementById('messageArea');
-        area.innerHTML = '';
+        // 既存のリスナーがあれば解除
+        if (unsubscribeMessages) {
+            unsubscribeMessages();
+        }
 
-        const messages = JSON.parse(localStorage.getItem(currentRoomId)) || [];
+        // 【重要】Firestoreのリアルタイムリスナー機能（onSnapshot）
+        // 画面を更新しなくても、コレクション内にドキュメントが追加されると自動検知して動き出します。
+        const msgRef = collection(db, "rooms", currentRoomId, "messages");
+        const q = query(msgRef, orderBy("timestamp", "asc"));
 
-        messages.forEach(msg => {
-            const row = document.createElement('div');
-            const isMe = (msg.senderId === myInfo.id);
-            row.className = `msg-row ${isMe ? 'me' : 'other'}`;
+        unsubscribeMessages = onSnapshot(q, (snapshot) => {
+            const area = document.getElementById('messageArea');
+            area.innerHTML = '';
 
-            row.innerHTML = `
-                <div class="sender-info">${escapeHTML(msg.senderName)} (${escapeHTML(msg.senderId)})</div>
-                <div class="balloon">${escapeHTML(msg.text).replace(/\n/g, '<br>')}</div>
-            `;
-            area.appendChild(row);
+            snapshot.forEach((doc) => {
+                const msg = doc.data();
+                const row = document.createElement('div');
+                const isMe = (msg.senderId === myInfo.id);
+                row.className = `msg-row ${isMe ? 'me' : 'other'}`;
+
+                row.innerHTML = `
+                    <div class="sender-info">${escapeHTML(msg.senderName)} (${escapeHTML(msg.senderId)})</div>
+                    <div class="balloon">${escapeHTML(msg.text || '').replace(/\n/g, '<br>')}</div>
+                `;
+                area.appendChild(row);
+            });
+            area.scrollTop = area.scrollHeight; // 最下部へスクロール
         });
-        area.scrollTop = area.scrollHeight;
     }
 
-    function sendMessage() {
+    // メッセージ送信（Firestoreへの書き込み）
+    async function sendMessage() {
         const input = document.getElementById('messageInput');
         const text = input.value.trim();
         if (!text || !currentRoomId) return;
 
-        const messages = JSON.parse(localStorage.getItem(currentRoomId)) || [];
-        const timestamp = new Date().getTime();
-
-        const messageObj = {
-            senderId: myInfo.id,
-            senderName: myInfo.name,
-            text: text,
-            timestamp: timestamp
-        };
-
-        messages.push(messageObj);
-        localStorage.setItem(currentRoomId, JSON.stringify(messages));
-
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            const payload = {
-                roomId: currentRoomId,
+        try {
+            // 指定ルームのサブコレクションにメッセージデータを保存
+            const msgRef = collection(db, "rooms", currentRoomId, "messages");
+            await addDoc(msgRef, {
                 senderId: myInfo.id,
                 senderName: myInfo.name,
                 text: text,
-                timestamp: timestamp
-            };
-            socket.send(JSON.stringify(payload));
-        } else {
-            alert('現在サーバーに接続されていません。');
+                timestamp: serverTimestamp() // サーバー時間を使用
+            });
+            input.value = '';
+        } catch (error) {
+            console.error("送信エラー:", error);
+            alert("送信に失敗しました。プロジェクトの設定やセキュリティルールを確認してください。");
         }
-
-        input.value = '';
-        loadMessages();
     }
 
+    // --- 7. 各種ユーティリティ関数 ---
     function handleEnter(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -672,7 +586,18 @@
             return escape[match];
         });
     }
-</script>
 
+    // `<script type="module">` 内の関数をHTMLのボタン（onclick）から呼べるようにwindowに公開
+    function setupGlobalFunctions() {
+        window.updateProfile = updateProfile;
+        window.createNewGroup = createNewGroup;
+        window.joinGroupById = joinGroupById;
+        window.addFriendById = addFriendById;
+        window.switchTab = switchTab;
+        window.sendMessage = sendMessage;
+        window.handleEnter = handleEnter;
+    }
+</script>
+    
 </body>
 </html>
